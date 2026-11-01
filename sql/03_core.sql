@@ -65,58 +65,30 @@ CREATE TABLE core.dim_product (
     UNIQUE (product_id, valid_from)
 );
 
--- Загружаем первую версию каждого товара
-INSERT INTO core.dim_product (product_id, product_name, category, price, valid_from, valid_to, is_current)
-SELECT
+-- Загружаем все версии (без дублей по product_id + valid_from)
+INSERT INTO core.dim_product (product_id, product_name, category, price, valid_from)
+SELECT DISTINCT ON (TRIM(product_id), valid_from::DATE)
     TRIM(product_id),
     TRIM(product_name),
     COALESCE(TRIM(category), 'Без категории'),
     NULLIF(TRIM(price), '')::NUMERIC(10,2),
-    MIN(valid_from::DATE),
-    NULL,
-    TRUE
+    valid_from::DATE
 FROM staging.stg_products
 WHERE product_id IS NOT NULL
-GROUP BY TRIM(product_id), TRIM(product_name), COALESCE(TRIM(category), 'Без категории'), NULLIF(TRIM(price), '')::NUMERIC(10,2);
+ORDER BY TRIM(product_id), valid_from::DATE;
 
--- Закрываем старые версии и добавляем новые (упрощённый SCD2 для демонстрации)
-WITH new_versions AS (
-    SELECT
-        TRIM(product_id) AS product_id,
-        TRIM(product_name) AS product_name,
-        COALESCE(TRIM(category), 'Без категории') AS category,
-        NULLIF(TRIM(price), '')::NUMERIC(10,2) AS price,
-        valid_from::DATE AS valid_from
-    FROM staging.stg_products
-    WHERE product_id IS NOT NULL
+-- Закрываем все версии, кроме последней для каждого product_id
+WITH ranked AS (
+    SELECT product_key,
+           ROW_NUMBER() OVER (PARTITION BY product_id ORDER BY valid_from DESC) AS rn,
+           LEAD(valid_from) OVER (PARTITION BY product_id ORDER BY valid_from) AS next_from
+    FROM core.dim_product
 )
 UPDATE core.dim_product dp
-SET valid_to = nv.valid_from - INTERVAL '1 day',
-    is_current = FALSE
-FROM new_versions nv
-WHERE dp.product_id = nv.product_id
-  AND dp.is_current = TRUE
-  AND (dp.price IS DISTINCT FROM nv.price OR dp.category IS DISTINCT FROM nv.category)
-  AND nv.valid_from > dp.valid_from;
-
--- Вставляем новые версии (изменённые цена/категория)
-INSERT INTO core.dim_product (product_id, product_name, category, price, valid_from, valid_to, is_current)
-SELECT
-    nv.product_id, nv.product_name, nv.category, nv.price, nv.valid_from, NULL, TRUE
-FROM (
-    SELECT
-        TRIM(product_id) AS product_id,
-        TRIM(product_name) AS product_name,
-        COALESCE(TRIM(category), 'Без категории') AS category,
-        NULLIF(TRIM(price), '')::NUMERIC(10,2) AS price,
-        valid_from::DATE AS valid_from
-    FROM staging.stg_products
-    WHERE product_id IS NOT NULL
-) nv
-WHERE NOT EXISTS (
-    SELECT 1 FROM core.dim_product dp
-    WHERE dp.product_id = nv.product_id AND dp.valid_from = nv.valid_from
-);
+SET is_current = (r.rn = 1),
+    valid_to = CASE WHEN r.rn = 1 THEN NULL ELSE r.next_from - INTERVAL '1 day' END
+FROM ranked r
+WHERE dp.product_key = r.product_key;
 
 COMMENT ON TABLE core.dim_product IS 'SCD Type 2: история изменений товаров';
 COMMENT ON COLUMN core.dim_product.valid_from IS 'Дата начала действия версии';
@@ -159,6 +131,22 @@ WHERE s.sale_id IS NOT NULL
 ORDER BY s.sale_id;
 
 COMMENT ON TABLE core.fact_sales IS 'Факты продаж, очищенные и связанные с измерениями';
+
+-- --------------------------------------------
+-- 5. Представление для выгрузки в ClickHouse
+-- --------------------------------------------
+CREATE OR REPLACE VIEW core.sales_denorm AS
+SELECT
+    fs.date_key,
+    ds.store_name,
+    ds.city,
+    dp.product_name,
+    dp.category,
+    fs.quantity,
+    fs.amount
+FROM core.fact_sales fs
+JOIN core.dim_store ds ON fs.store_key = ds.store_key
+JOIN core.dim_product dp ON fs.product_key = dp.product_key;
 
 -- Индексы для витрин
 CREATE INDEX idx_fact_sales_date ON core.fact_sales (date_key);
