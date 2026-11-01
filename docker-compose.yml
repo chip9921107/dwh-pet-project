@@ -1,0 +1,42 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: dwh-postgres
+    environment:
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: dwh
+    ports:
+      - "5432:5432"
+    volumes:
+      - dwh_pg_data:/var/lib/postgresql/data
+    networks:
+      - dwh-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d dwh"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:latest
+    container_name: dwh-clickhouse
+    ports:
+      - "8123:8123"
+      - "9000:9000"
+    volumes:
+      - dwh_ch_data:/var/lib/clickhouse
+    networks:
+      - dwh-net
+    environment:
+      CLICKHOUSE_USER: admin
+      CLICKHOUSE_PASSWORD: admin123
+    depends_on:
+      - postgres
+
+volumes:
+  dwh_pg_data:
+  dwh_ch_data:
+
+networks:
+  dwh-net:
+    driver: bridge
