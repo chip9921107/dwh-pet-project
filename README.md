@@ -97,3 +97,14 @@ docker exec -i dwh-clickhouse clickhouse-client --multiquery --queries-file /sql
   <li>ClickHouse: MergeTree, партиционирование, ключ сортировки.</li>
   <li>Docker / Docker Compose: изоляция сервисов, volumes, сети.</li>
 </ul>
+
+<hr>
+
+<h2>Связанные проекты</h2>
+<ul>
+  <li>
+    <strong><a href="https://github.com/chip9921107/retail-data-pipelines">retail-data-pipelines</a></strong> — 
+    Production ETL-пайплайн (MySQL → PostgreSQL) с идемпотентной загрузкой и resume-логикой. 
+    Демонстрирует <em>инженерную зрелость</em> и опыт работы с реальными данными.
+  </li>
+</ul>
